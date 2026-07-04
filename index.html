@@ -397,8 +397,11 @@ const DEFAULT_COLOR_LABELS={trabalho:'Em produção',postado:'Postado',limite:'A
 const COLOR_KEYS=['trabalho','postado','limite'];
 
 /* ============ Nuvem (Google Apps Script) ============ */
+// Link do aplicativo (Web App) já configurado de fábrica.
+// Para trocar de conta/planilha no futuro, basta alterar o link abaixo.
+const API_URL_FIXO='https://script.google.com/macros/s/AKfycbyCx8FqDVdGUXzkoJjLmrzyA8CfEEo4vShagPO6akJOzYyO3qgQG477KW5i3FzC6ieU/exec';
 const API_KEY='mkt_api_url';
-let API_URL=localStorage.getItem(API_KEY)||'';
+let API_URL=API_URL_FIXO||localStorage.getItem(API_KEY)||'';
 
 let TYPES=JSON.parse(JSON.stringify(DEFAULT_TYPES));
 let COLOR_LABELS=JSON.parse(JSON.stringify(DEFAULT_COLOR_LABELS));
@@ -1022,9 +1025,27 @@ async function boot(){
     renderLegend();
     render();
   }catch(e){
-    toast('Erro ao carregar dados: '+e.message,true);
-    // se falhar (link errado), reabre configuração
-    localStorage.removeItem(API_KEY);API_URL='';showSetup();
+    // link já vem embutido: se falhar, mostra aviso e opção de tentar de novo
+    document.getElementById('monthLabel').textContent='Erro';
+    const modal=document.getElementById('modal');
+    modal.innerHTML=`
+      <div class="modal-head"><h2>⚠️ Não consegui conectar</h2></div>
+      <div class="modal-body">
+        <p style="font-size:14px;line-height:1.6;color:var(--ink)">
+          O sistema tentou se conectar à nuvem, mas houve um erro:<br>
+          <span style="color:var(--c-limite);font-weight:600">${esc(e.message)}</span>
+        </p>
+        <p style="font-size:13px;color:var(--muted);margin-top:12px;line-height:1.6">
+          Verifique sua conexão com a internet e tente novamente. Se o problema persistir,
+          confira se o aplicativo do Google Apps Script continua publicado com acesso
+          para "Qualquer pessoa".
+        </p>
+      </div>
+      <div class="modal-foot">
+        <span></span>
+        <button class="btn btn-primary" onclick="boot()">🔄 Tentar novamente</button>
+      </div>`;
+    document.getElementById('overlay').classList.add('show');
   }
 }
 
