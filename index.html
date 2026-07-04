@@ -338,6 +338,33 @@
   #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
   #toast.err{background:var(--c-limite)}
   .prod-thumb.uploading{animation:pulse 1s infinite}
+  .prod-thumb.dragover{border-color:var(--brand);border-style:solid;background:var(--brand-soft);box-shadow:0 0 0 2px var(--brand-soft)}
+  .dp-photo{cursor:zoom-in;transition:.12s}
+  .dp-photo:hover{filter:brightness(.95);transform:scale(1.03)}
+
+  /* lightbox de foto ampliada */
+  #lightbox{
+    position:fixed;inset:0;background:rgba(20,16,30,.88);z-index:300;
+    display:none;flex-direction:column;align-items:center;justify-content:center;padding:20px;gap:14px
+  }
+  #lightbox.show{display:flex}
+  #lightbox .lb-bar{
+    position:absolute;top:0;left:0;right:0;display:flex;align-items:center;justify-content:space-between;
+    padding:14px 20px;gap:12px
+  }
+  #lightbox .lb-title{color:#fff;font-size:15px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #lightbox .lb-actions{display:flex;gap:8px;flex-shrink:0}
+  #lightbox .lb-btn{
+    padding:8px 14px;border-radius:10px;background:rgba(255,255,255,.14);color:#fff;
+    font-size:13px;font-weight:600;text-decoration:none;border:none;cursor:pointer;transition:.15s;white-space:nowrap
+  }
+  #lightbox .lb-btn:hover{background:rgba(255,255,255,.28)}
+  #lightbox .lb-img{
+    max-width:92vw;max-height:78vh;border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.5);
+    object-fit:contain;background:#fff;cursor:grab
+  }
+  #lightbox .lb-img:active{cursor:grabbing}
+  #lightbox .lb-hint{color:rgba(255,255,255,.65);font-size:12px;text-align:center}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
   a.attach-view{text-decoration:none;cursor:pointer}
   a.attach-view:hover{filter:brightness(.97)}
@@ -639,7 +666,7 @@ function openDay(date){
       meta+=`<span class="meta-tag" style="color:var(--brand-ink)">📅 Postagem: ${fmtBR(ev.date)}</span>`;
       let prods='';
       (ev.products||[]).forEach(p=>{
-        const img=p.photo?`<img src="${p.photo}">`:`<div class="dp-ph">📦</div>`;
+        const img=p.photo?`<img src="${p.photo}" class="dp-photo" onclick="openLightbox('${p.photo}','${esc(p.name)||'Produto'}')" title="Clique para ampliar">`:`<div class="dp-ph">📦</div>`;
         const sub=[p.code?'Cód: '+esc(p.code):'',p.supplier?esc(p.supplier):''].filter(Boolean).join(' · ');
         const pnotes=p.notes?`<div class="dp-notes">📝 ${esc(p.notes)}</div>`:'';
         prods+=`<div class="dp"><div class="dp-top">${img}<div class="dp-info"><strong>${esc(p.name)||'Produto sem nome'}</strong><small>${sub||'—'}</small></div></div>${pnotes}</div>`;
@@ -693,8 +720,7 @@ function openDay(date){
   document.getElementById('overlay').classList.add('show');
 }
 
-async function markPosted(id,date){
-  const ev=events.find(e=>e.id===id); if(!ev)return;
+async function markPosted(id,date){  const ev=events.find(e=>e.id===id); if(!ev)return;
   ev.status='postado';render();openDay(date);
   try{ await cloudSaveEvent(ev); }catch(e){ toast('Erro ao salvar: '+e.message,true); }
 }
@@ -770,7 +796,7 @@ function buildFormShell(date){
       </div>
 
       <div class="field prod-field">
-        <label class="prod-label">📦 Produtos do lançamento <span class="opt">(todos os campos opcionais)</span></label>
+        <label class="prod-label">📦 Produtos do lançamento <span class="opt">(clique, arraste ou cole Ctrl+V a foto)</span></label>
         <div class="prod-list" id="prodList"></div>
         <button type="button" class="add-prod" onclick="addProduct()"><span>+</span> Adicionar produto</button>
       </div>
@@ -878,7 +904,12 @@ function renderProducts(){
   const header=formProducts.length?`<div class="prod-list-head"><span></span><span>Nome</span><span>Código</span><span>Fornecedor</span><span></span><span></span></div>`:'';
   box.innerHTML=header+formProducts.map((p,i)=>`
     <div class="prod-row">
-      <button type="button" class="prod-thumb ${p._uploading?'uploading':''}" onclick="document.getElementById('pphoto-${i}').click()" title="Adicionar foto">
+      <button type="button" class="prod-thumb ${p._uploading?'uploading':''}" tabindex="0"
+        onclick="document.getElementById('pphoto-${i}').click()"
+        ondragover="event.preventDefault();this.classList.add('dragover')"
+        ondragleave="this.classList.remove('dragover')"
+        ondrop="dropPhoto(event,${i})"
+        title="Clique, arraste ou cole (Ctrl+V) uma foto aqui">
         ${p._uploading?'<span class="ph">⏳</span>':(p.photo?`<img src="${p.photo}">`:`<span class="ph">📷</span>`)}
       </button>
       <input type="file" id="pphoto-${i}" accept="image/*" style="display:none" onchange="handlePhoto(${i},this)">
@@ -898,19 +929,39 @@ function toggleProdNote(i){
 }
 function updProduct(i,k,v){formProducts[i][k]=v}
 function delProduct(i){formProducts.splice(i,1);renderProducts()}
+// upload comum de imagem para um produto (usado por clique, arrastar e colar)
+async function uploadImageForProduct(i,file){
+  if(!file||!file.type||file.type.indexOf('image/')!==0){
+    toast('Isso não parece uma imagem.',true);return;
+  }
+  const dataUrl=await new Promise((res,rej)=>{
+    const r=new FileReader();r.onload=e=>res(e.target.result);r.onerror=rej;r.readAsDataURL(file);
+  });
+  formProducts[i].photo=dataUrl;              // prévia imediata
+  formProducts[i]._uploading=true;renderProducts();
+  try{
+    const res=await cloudUploadPhoto(dataUrl,file.name||('foto_'+Date.now()+'.png'));
+    formProducts[i].photo=res.url;            // troca por URL do Drive
+  }catch(err){ toast('Erro ao enviar foto: '+err.message,true); }
+  formProducts[i]._uploading=false;renderProducts();
+}
 function handlePhoto(i,input){
   const f=input.files[0];if(!f)return;
-  const r=new FileReader();
-  r.onload=async e=>{
-    formProducts[i].photo=e.target.result;         // prévia imediata (base64)
-    formProducts[i]._uploading=true;renderProducts();
-    try{
-      const res=await cloudUploadPhoto(e.target.result,f.name);
-      formProducts[i].photo=res.url;                // troca por URL do Drive
-    }catch(err){ toast('Erro ao enviar foto: '+err.message,true); }
-    formProducts[i]._uploading=false;renderProducts();
-  };
-  r.readAsDataURL(f);
+  uploadImageForProduct(i,f);
+}
+// arrastar e soltar imagem sobre a miniatura
+function dropPhoto(ev,i){
+  ev.preventDefault();
+  const el=ev.currentTarget;if(el)el.classList.remove('dragover');
+  const dt=ev.dataTransfer;if(!dt)return;
+  // arquivo arrastado do computador
+  if(dt.files&&dt.files.length){uploadImageForProduct(i,dt.files[0]);return;}
+  // imagem arrastada de outra página/aba (vem como URL)
+  const url=dt.getData('text/uri-list')||dt.getData('text/plain');
+  if(url&&/^https?:\/\//.test(url)){
+    fetch(url).then(r=>r.blob()).then(b=>uploadImageForProduct(i,new File([b],'foto.png',{type:b.type||'image/png'})))
+      .catch(()=>toast('Não consegui baixar a imagem arrastada.',true));
+  }
 }
 function handleAttach(input){
   const f=input.files[0];if(!f)return;
@@ -962,6 +1013,45 @@ async function saveForm(origDate){
   try{ await cloudSaveEvent(ev); }catch(e){ toast('Erro ao salvar: '+e.message,true); }
 }
 function closeModal(){document.getElementById('overlay').classList.remove('show')}
+
+/* ============ Foto ampliada (lightbox) ============ */
+function openLightbox(src,title){
+  let lb=document.getElementById('lightbox');
+  if(!lb){
+    lb=document.createElement('div');lb.id='lightbox';
+    lb.onclick=(e)=>{if(e.target===lb||e.target.classList.contains('lb-close')||e.target.classList.contains('lb-bar'))closeLightbox()};
+    document.body.appendChild(lb);
+  }
+  lb.innerHTML=`
+    <div class="lb-bar">
+      <span class="lb-title">${esc(title||'Foto')}</span>
+      <div class="lb-actions">
+        <a class="lb-btn" href="${src}" target="_blank" rel="noopener" title="Abrir em nova aba">↗ Abrir</a>
+        <a class="lb-btn" href="${src}" download title="Baixar imagem">⬇ Baixar</a>
+        <button class="lb-btn lb-close" title="Fechar">✕ Fechar</button>
+      </div>
+    </div>
+    <img class="lb-img" src="${src}" alt="${esc(title||'')}" draggable="true">
+    <div class="lb-hint">Arraste a imagem para fora do sistema para copiar · ou use "Baixar"</div>`;
+  lb.classList.add('show');
+}
+function closeLightbox(){const lb=document.getElementById('lightbox');if(lb)lb.classList.remove('show')}
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeLightbox()});
+
+// colar imagem em qualquer lugar do formulário: aplica ao último produto (cria um se não houver)
+document.addEventListener('paste',e=>{
+  const overlayOpen=document.getElementById('overlay').classList.contains('show');
+  const formOpen=!!document.getElementById('prodList');
+  if(!overlayOpen||!formOpen)return;
+  // se o foco está num campo de texto, deixa o comportamento normal (a menos que seja imagem)
+  const items=(e.clipboardData||window.clipboardData)?.items;if(!items)return;
+  let imgFile=null;
+  for(const it of items){ if(it.type&&it.type.indexOf('image/')===0){imgFile=it.getAsFile();break;} }
+  if(!imgFile)return;
+  e.preventDefault();
+  if(formProducts.length===0){formProducts.push({name:'',code:'',supplier:'',photo:'',notes:''});renderProducts();}
+  uploadImageForProduct(formProducts.length-1,imgFile);
+});
 document.getElementById('overlay').addEventListener('click',e=>{if(e.target.id==='overlay')closeModal()});
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal()});
 
