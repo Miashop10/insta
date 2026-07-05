@@ -299,8 +299,9 @@
   .dp-info small{font-size:11px;color:var(--muted)}
   .dp-notes{font-size:12px;color:var(--ink);line-height:1.5;background:#fff;border:1px solid var(--line);border-radius:8px;padding:7px 10px}
   .ev-notes{font-size:13px;color:var(--ink);line-height:1.5;background:var(--brand-soft);border-radius:9px;padding:9px 12px;margin:8px 0}
-  .detail-actions{display:flex;gap:8px;margin-top:12px}
+  .detail-actions{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
   .detail-actions .btn{padding:8px 14px;font-size:13px}
+  .btn-mini{padding:8px 10px !important;font-size:12px !important}
   .empty-day{text-align:center;padding:30px 10px;color:var(--muted)}
   .empty-day .big{font-size:38px;margin-bottom:8px}
 
@@ -435,6 +436,7 @@ let COLOR_LABELS=JSON.parse(JSON.stringify(DEFAULT_COLOR_LABELS));
 let events=[];   // {id,date,title,types:[..],notes,products:[{name,code,supplier,photo,notes}],attachment,status}
 let view=new Date();
 let editingId=null;
+let copiedProject=null;   // projeto copiado para colar em outro dia
 
 // chamada genérica à API (GET para ler, POST para gravar)
 async function api(action,payload){
@@ -700,6 +702,7 @@ function openDay(date){
         ${attach}
         <div class="detail-actions">
           ${postBtn}
+          <button class="btn btn-ghost btn-mini" onclick="copyProject('${ev.id}')" title="Copiar este projeto para colar em outro dia">📋 Copiar</button>
           <button class="btn btn-ghost" onclick="openForm('${ev.date}','${ev.id}')">✏️ Editar</button>
           <button class="btn btn-danger" onclick="delEvent('${ev.id}','${date}')">🗑️ Excluir</button>
         </div>
@@ -715,13 +718,15 @@ function openDay(date){
     <div class="modal-body">${body}</div>
     <div class="modal-foot">
       <button class="btn btn-ghost" onclick="closeModal()">Fechar</button>
-      <button class="btn btn-primary" onclick="openForm('${date}')">+ Novo projeto</button>
+      <div style="display:flex;gap:8px">
+        ${copiedProject?`<button class="btn btn-ghost" onclick="pasteProject('${date}')" title="Colar o projeto copiado neste dia">📋 Colar «${esc((copiedProject.title||'projeto').slice(0,18))}»</button>`:''}
+        <button class="btn btn-primary" onclick="openForm('${date}')">+ Novo projeto</button>
+      </div>
     </div>`;
   document.getElementById('overlay').classList.add('show');
 }
 
-async function markPosted(id,date){  const ev=events.find(e=>e.id===id); if(!ev)return;
-  ev.status='postado';render();openDay(date);
+async function markPosted(id,date){  const ev=events.find(e=>e.id===id); if(!ev)return;  ev.status='postado';render();openDay(date);
   try{ await cloudSaveEvent(ev); }catch(e){ toast('Erro ao salvar: '+e.message,true); }
 }
 async function unmarkPosted(id,date){
@@ -736,6 +741,26 @@ async function delEvent(id,date){
   remaining.length?openDay(date):closeModal();
   render();
   try{ await cloudDeleteEvent(id); }catch(e){ toast('Erro ao excluir: '+e.message,true); }
+}
+
+/* ============ Copiar / Colar projeto ============ */
+function copyProject(id){
+  const ev=events.find(e=>e.id===id); if(!ev)return;
+  // cópia profunda de todas as informações (títulos, tipos, produtos, fotos, notas, anexo)
+  copiedProject=JSON.parse(JSON.stringify(ev));
+  toast('Projeto copiado. Abra outro dia e clique em "Colar".');
+  openDay(ev.date); // re-renderiza para o botão colar aparecer também aqui
+}
+async function pasteProject(date){
+  if(!copiedProject)return;
+  const novo=JSON.parse(JSON.stringify(copiedProject));
+  novo.id=uid();
+  novo.date=date;            // vai para o dia escolhido
+  novo.status=null;          // começa como "em produção"
+  events.push(novo);
+  render();openDay(date);
+  try{ await cloudSaveEvent(novo); toast('Projeto colado neste dia!'); }
+  catch(e){ toast('Erro ao salvar cópia: '+e.message,true); }
 }
 
 /* ============ Formulário ============ */
