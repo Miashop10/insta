@@ -459,7 +459,47 @@ async function api(action,payload){
 }
 
 // grava um projeto na nuvem
-async function cloudSaveEvent(ev){ return api('save',{event:ev}); }
+// Antes de gravar: garante que nenhuma imagem esteja em base64 (o Sheets tem limite
+// de 50.000 caracteres por célula). Se encontrar base64, envia ao Drive e troca pela URL.
+async function sanitizeEvent(ev){
+  let mudou=false;
+  const ehBase64=v=>typeof v==='string' && v.indexOf('data:')===0;
+
+  // fotos dos produtos
+  for(const p of (ev.products||[])){
+    if(ehBase64(p.photo)){
+      try{
+        const res=await cloudUploadPhoto(p.photo,(p.name||'foto')+'.png');
+        p.photo=res.url; mudou=true;
+      }catch(e){
+        // se não conseguir enviar, remove a foto para não travar o salvamento
+        p.photo=''; mudou=true;
+        toast('Uma foto não pôde ser enviada e foi removida.',true);
+      }
+    }
+    delete p._uploading;
+  }
+  // anexo
+  if(ev.attachment){
+    if(ehBase64(ev.attachment.url)||ehBase64(ev.attachment.data)){
+      const dataUrl=ev.attachment.url&&ehBase64(ev.attachment.url)?ev.attachment.url:ev.attachment.data;
+      try{
+        const res=await cloudUploadPhoto(dataUrl,ev.attachment.name||'anexo');
+        ev.attachment={name:ev.attachment.name,size:ev.attachment.size,url:res.url}; mudou=true;
+      }catch(e){
+        ev.attachment=null; mudou=true;
+        toast('O anexo não pôde ser enviado e foi removido.',true);
+      }
+    }
+    if(ev.attachment) delete ev.attachment.data;
+  }
+  return mudou;
+}
+
+async function cloudSaveEvent(ev){
+  await sanitizeEvent(ev);      // corrige imagens grandes antes de gravar
+  return api('save',{event:ev});
+}
 // exclui um projeto na nuvem
 async function cloudDeleteEvent(id){ return api('delete',{id}); }
 // grava uma configuração (tipos, rótulos de cor)
@@ -726,13 +766,30 @@ function openDay(date){
   document.getElementById('overlay').classList.add('show');
 }
 
-async function markPosted(id,date){  const ev=events.find(e=>e.id===id); if(!ev)return;  ev.status='postado';render();openDay(date);
-  try{ await cloudSaveEvent(ev); }catch(e){ toast('Erro ao salvar: '+e.message,true); }
+async function markPosted(id,date){
+  const ev=events.find(e=>e.id===id); if(!ev)return;
+  const anterior=ev.status;
+  ev.status='postado';render();openDay(date);
+  toast('Salvando…');
+  try{
+    await cloudSaveEvent(ev);
+    toast('Marcado como postado ✅');
+  }catch(e){
+    ev.status=anterior;render();openDay(date);   // desfaz se não salvou
+    toast('Não consegui salvar: '+e.message,true);
+  }
 }
 async function unmarkPosted(id,date){
   const ev=events.find(e=>e.id===id); if(!ev)return;
+  const anterior=ev.status;
   ev.status=null;render();openDay(date);
-  try{ await cloudSaveEvent(ev); }catch(e){ toast('Erro ao salvar: '+e.message,true); }
+  try{
+    await cloudSaveEvent(ev);
+    toast('Status revertido');
+  }catch(e){
+    ev.status=anterior;render();openDay(date);
+    toast('Não consegui salvar: '+e.message,true);
+  }
 }
 async function delEvent(id,date){
   if(!confirm('Excluir este projeto?'))return;
